@@ -14,3 +14,4 @@ source ./venv/bin/activate
   - picamera2
   - spidev
   - Face_recognition
+  - scipy

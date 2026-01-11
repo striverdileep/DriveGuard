@@ -1,6 +1,7 @@
 # cam.py
 import time
 from picamera2 import Picamera2
+from io import BytesIO
 
 class Camera:
     def __init__(self):
@@ -13,14 +14,19 @@ class Camera:
 
     def capture_stable_image(self, filename):
         """
-        Captures a stable image using a dummy frame for auto-adjustment.
+        Captures a stable image.
+        Warm-up frame is captured in-memory (no SD card write).
+        Only the final image is saved to disk.
         Total time ≈ 3 seconds.
         """
-        # Warm-up phase
-        time.sleep(1.5)
-        self.picam2.capture_file("dummy.jpg")  # garbage image
 
-        # Final capture
+        # ---- Warm-up capture (in memory) ----
+        time.sleep(1.5)
+        buffer = BytesIO()
+        self.picam2.capture_file(buffer, format="jpeg")
+        buffer.close()  # discard warm-up frame
+
+        # ---- Final capture (persisted) ----
         time.sleep(1.5)
         self.picam2.capture_file(filename)
 

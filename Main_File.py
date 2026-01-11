@@ -2,7 +2,7 @@
 import os
 import threading
 from datetime import datetime
-from liveness import check_blink
+from liveliness import check_blink
 
 from cam import Camera
 from ocr_test import process_document
