@@ -7,7 +7,7 @@ from session_logger import SessionLogger
 from cam import Camera
 from ocr_test import process_document
 from face_match import match_faces
-from liveness import check_blink
+from liveliness import check_blink
 from alcohol_sensor import AlcoholSensor
 from license_api import verify_license
 from ignition_control import IgnitionController
