@@ -2,6 +2,7 @@
 import os
 import threading
 from datetime import datetime
+from liveness import check_blink
 
 from cam import Camera
 from ocr_test import process_document
@@ -60,6 +61,13 @@ def main():
     )
     ocr_ok = license_data is not None
 
+    print("\n👁️ Performing liveness check (blink)...")
+    liveness_ok = check_blink()
+
+    if not liveness_ok:
+        print("❌ Liveness check failed (no blink detected)")
+        return
+
     # 🧑‍🦰 Face match
     face_result = match_faces(
         session["license_img"],
@@ -79,11 +87,12 @@ def main():
 
     # 🎯 Final decision (ECU‑style AND gate)
     final_decision = (
-        ocr_ok
-        and face_ok
-        and api_ok
-        and alcohol_ok
-    )
+    ocr_ok
+    and liveness_ok
+    and face_ok
+    and api_ok
+    and alcohol_ok
+)
 
     # ---------------- RESULT ----------------
     print("\n========== FINAL RESULT ==========")
@@ -91,6 +100,7 @@ def main():
     print(f"Face Match   : {face_ok}")
     print(f"License API  : {api_ok}")
     print(f"Alcohol OK   : {alcohol_ok}")
+    print(f"Liveness OK   : {liveness_ok}")
     print("---------------------------------")
 
     if final_decision:
