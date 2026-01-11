@@ -7,7 +7,7 @@ from session_logger import SessionLogger
 from cam import Camera
 from ocr_test import process_document
 from face_match import match_faces
-from liveliness import check_blink
+from liveness import check_blink_from_frames
 from alcohol_sensor import AlcoholSensor
 from license_api import verify_license
 from ignition_control import IgnitionController
@@ -58,12 +58,12 @@ def main():
         cam.close()
 
         # 👁️ Liveness check
-        print("\n👁️ Checking liveness...")
-        liveness_ok = check_blink()
+        print("\n👁️ Performing liveness check...")
+        frame_stream = cam.get_frame_stream(duration_sec=3)
+        liveness_ok = check_blink_from_frames(frame_stream)
         logger.log_check("liveness", liveness_ok)
         if not liveness_ok:
             print("❌ Liveness failed")
-            ignition.block_ignition()
             return
 
         # 🔍 OCR
