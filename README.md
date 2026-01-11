@@ -15,3 +15,4 @@ source ./venv/bin/activate
   - spidev
   - Face_recognition
   - scipy
+  - RPi.GPIO
