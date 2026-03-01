@@ -7,19 +7,23 @@ def load_and_encode(image_path):
     Loads an image, detects ONE face, and returns its encoding.
     Returns None if no face or multiple faces detected.
     """
-    image = face_recognition.load_image_file(image_path)
-    face_locations = face_recognition.face_locations(image)
+    try:
+        image = face_recognition.load_image_file(image_path)
+        face_locations = face_recognition.face_locations(image)
 
-    if len(face_locations) == 0:
-        print(f"❌ No face detected in {image_path}")
+        if len(face_locations) == 0:
+            print(f"❌ No face detected in {image_path}")
+            return None
+
+        if len(face_locations) > 1:
+            print(f"⚠️ Multiple faces detected in {image_path}")
+            return None
+
+        encoding = face_recognition.face_encodings(image, face_locations)[0]
+        return encoding
+    except Exception as e:
+        print(f"⚠️ Face encoding error ({image_path}): {e}")
         return None
-
-    if len(face_locations) > 1:
-        print(f"⚠️ Multiple faces detected in {image_path}")
-        return None
-
-    encoding = face_recognition.face_encodings(image, face_locations)[0]
-    return encoding
 
 
 def match_faces(license_image_path, user_image_path, threshold=0.6):
@@ -33,22 +37,26 @@ def match_faces(license_image_path, user_image_path, threshold=0.6):
         }
     """
 
-    license_encoding = load_and_encode(license_image_path)
-    user_encoding = load_and_encode(user_image_path)
+    try:
+        license_encoding = load_and_encode(license_image_path)
+        user_encoding = load_and_encode(user_image_path)
 
-    if license_encoding is None or user_encoding is None:
+        if license_encoding is None or user_encoding is None:
+            return {
+                "match": False,
+                "distance": None,
+                "reason": "Face detection failed"
+            }
+
+        # Compute distance (lower = more similar)
+        distance = np.linalg.norm(license_encoding - user_encoding)
+
+        match = distance <= threshold
+
         return {
-            "match": False,
-            "distance": None,
-            "reason": "Face detection failed"
+            "match": match,
+            "distance": round(float(distance), 4)
         }
-
-    # Compute distance (lower = more similar)
-    distance = np.linalg.norm(license_encoding - user_encoding)
-
-    match = distance <= threshold
-
-    return {
-        "match": match,
-        "distance": round(float(distance), 4)
-    }
+    except Exception as e:
+        print(f"⚠️ Face matching error: {e}")
+        return {"match": False, "distance": None, "reason": str(e)}

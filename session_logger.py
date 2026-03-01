@@ -27,11 +27,17 @@ class SessionLogger:
             "details": details
         }
 
+    def log_error(self, name, exc):
+        """Convenience: record a failure with exception details."""
+        self.log_check(name, False, {"error": str(exc)})
+
     def set_final_decision(self, decision):
         self.data["final_decision"] = bool(decision)
 
     def write(self):
-        with open(self.log_path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=4)
-
-        print(f"📝 Session log written: {self.log_path}")
+        try:
+            with open(self.log_path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=4)
+            print(f"📝 Session log written: {self.log_path}")
+        except Exception as e:
+            print(f"⚠️ Failed to write session log: {e}")

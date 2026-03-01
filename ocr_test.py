@@ -110,23 +110,30 @@ def process_document(image_path, doc_name, output_txt):
     """
     DO NOT change signature — used directly by Main_File.py
     """
-    raw = extract_text(image_path, doc_name)
-    if not raw:
+    try:
+        raw = extract_text(image_path, doc_name)
+        if not raw:
+            return None
+
+        # Save raw OCR output
+        try:
+            with open(output_txt, "w", encoding="utf-8") as f:
+                f.write(raw)
+        except Exception as e:
+            print(f"⚠️ OCR: failed to write output text: {e}")
+
+        text = clean_text(raw)
+        lines = [l.strip() for l in raw.upper().split("\n") if l.strip()]
+
+        data = extract_fields(text, lines)
+
+        if not data:
+            return None
+
+        return data
+    except Exception as e:
+        print(f"⚠️ OCR processing error: {e}")
         return None
-
-    # Save raw OCR output
-    with open(output_txt, "w", encoding="utf-8") as f:
-        f.write(raw)
-
-    text = clean_text(raw)
-    lines = [l.strip() for l in raw.upper().split("\n") if l.strip()]
-
-    data = extract_fields(text, lines)
-
-    if not data:
-        return None
-
-    return data
 
 if __name__ == "__main__":
     print("✅ OCR module test started")

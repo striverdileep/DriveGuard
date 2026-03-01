@@ -16,25 +16,37 @@ class IgnitionController:
         """
         self.pin = pin
 
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.pin, GPIO.OUT)
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(self.pin, GPIO.OUT)
 
-        # FAIL-SAFE DEFAULT
-        GPIO.output(self.pin, GPIO.LOW)  # ignition blocked
-        print("🔒 Ignition BLOCKED (default state)")
+            # FAIL-SAFE DEFAULT
+            GPIO.output(self.pin, GPIO.LOW)  # ignition blocked
+            print("🔒 Ignition BLOCKED (default state)")
+        except Exception as e:
+            print(f"⚠️ IgnitionController init error: {e}")
 
     def allow_ignition(self):
-        GPIO.output(self.pin, GPIO.HIGH)
-        print("✅ Ignition ALLOWED")
+        try:
+            GPIO.output(self.pin, GPIO.HIGH)
+            print("✅ Ignition ALLOWED")
+        except Exception as e:
+            print(f"⚠️ Ignition allow error: {e}")
 
     def block_ignition(self):
-        GPIO.output(self.pin, GPIO.LOW)
-        print("❌ Ignition BLOCKED")
+        try:
+            GPIO.output(self.pin, GPIO.LOW)
+            print("❌ Ignition BLOCKED")
+        except Exception as e:
+            print(f"⚠️ Ignition block error: {e}")
 
     def cleanup(self):
         """
         Ensure ignition is blocked and GPIO is cleaned up
         """
-        GPIO.output(self.pin, GPIO.LOW)
-        GPIO.cleanup()
-        print("🧹 GPIO cleaned, ignition safely blocked")
+        try:
+            GPIO.output(self.pin, GPIO.LOW)
+            GPIO.cleanup()
+            print("🧹 GPIO cleaned, ignition safely blocked")
+        except Exception as e:
+            print(f"⚠️ Ignition cleanup error: {e}")
