@@ -1,0 +1,31 @@
+# DriveGuard Python dependencies
+# run `pip install -r requirements.txt` to install everything.
+# Note: the tesseract-ocr binary and DeepFace model weights are not
+# managed by pip; the provided Dockerfile installs tesseract and
+# pre-fetches major DeepFace models during the image build so that
+# the container is self‑contained. On a bare host you must install
+# tesseract manually (e.g. `sudo apt install tesseract-ocr`) before
+# running the app the first time.
+
+# deepface brings in TensorFlow, numpy, pandas, etc.
+deepface>=0.0.75
+
+# OpenCV (DeepFace may pull a headless build, but another flavor
+# is useful for camera/visualization).
+opencv-python>=4.7.0
+
+# Raspberry‑Pi camera interface (on Pi this package is provided
+# by the OS; pip install may work on other platforms)
+picamera2>=0.1
+
+# OCR wrapper (requires tesseract-ocr binary installed separately)
+pytesseract>=0.3.10
+
+# GPIO and SPI libraries for the Pi
+RPi.GPIO>=0.7.0
+spidev>=3.5
+
+# if you want to be explicit about low‑level dependencies
+numpy>=1.25
+pandas>=2.0
+requests>=2.30

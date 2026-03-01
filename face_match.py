@@ -1,62 +1,59 @@
-import face_recognition
-import cv2
-import numpy as np
+# face_match.py
+"""
+Face matching using DeepFace library.
+Lightweight variant optimized for Raspberry Pi deployment.
+"""
 
-def load_and_encode(image_path):
-    """
-    Loads an image, detects ONE face, and returns its encoding.
-    Returns None if no face or multiple faces detected.
-    """
-    try:
-        image = face_recognition.load_image_file(image_path)
-        face_locations = face_recognition.face_locations(image)
-
-        if len(face_locations) == 0:
-            print(f"❌ No face detected in {image_path}")
-            return None
-
-        if len(face_locations) > 1:
-            print(f"⚠️ Multiple faces detected in {image_path}")
-            return None
-
-        encoding = face_recognition.face_encodings(image, face_locations)[0]
-        return encoding
-    except Exception as e:
-        print(f"⚠️ Face encoding error ({image_path}): {e}")
-        return None
+from deepface import DeepFace
 
 
 def match_faces(license_image_path, user_image_path, threshold=0.6):
     """
-    Compares face from license image with live user image.
+    Compares face from license image with live user image using DeepFace.
+
+    Args:
+        license_image_path: path to license/ID image
+        user_image_path: path to user's live face image
+        threshold: distance threshold for match (lower = stricter)
 
     Returns:
         {
             "match": True / False,
-            "distance": float
+            "distance": float or None,
+            "confidence": float (0-1)
         }
     """
-
     try:
-        license_encoding = load_and_encode(license_image_path)
-        user_encoding = load_and_encode(user_image_path)
+        # DeepFace.verify uses yunet (fast detector) & Facenet (lightweight model)
+        # anti_spoofing=True detects photo/video attacks
+        result = DeepFace.verify(
+            img1_path=license_image_path,
+            img2_path=user_image_path,
+            model_name="Facenet",
+            detector_backend="yunet",
+            distance_metric="euclidean",
+            enforce_detection=True,
+            align=True,
+            anti_spoofing=True
+        )
 
-        if license_encoding is None or user_encoding is None:
-            return {
-                "match": False,
-                "distance": None,
-                "reason": "Face detection failed"
-            }
+        distance = float(result.get("distance", 1.0))
+        match = result.get("verified", False)
 
-        # Compute distance (lower = more similar)
-        distance = np.linalg.norm(license_encoding - user_encoding)
-
-        match = distance <= threshold
+        # confidence: inverse of normalized distance
+        confidence = 1.0 - min(distance / 2.0, 1.0)
 
         return {
             "match": match,
-            "distance": round(float(distance), 4)
+            "distance": round(distance, 4),
+            "confidence": round(confidence, 4)
         }
+
     except Exception as e:
         print(f"⚠️ Face matching error: {e}")
-        return {"match": False, "distance": None, "reason": str(e)}
+        return {
+            "match": False,
+            "distance": None,
+            "confidence": 0.0,
+            "reason": str(e)
+        }
