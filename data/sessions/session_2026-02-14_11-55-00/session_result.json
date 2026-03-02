@@ -1,0 +1,27 @@
+{
+    "timestamp": "2026-02-14T11:55:00.040479",
+    "checks": {
+        "liveness": {
+            "status": true,
+            "details": null
+        },
+        "ocr": {
+            "status": true,
+            "details": {
+                "Issued_Date": "22-02-2019",
+                "Expiry_Date": "12-12-2027"
+            }
+        },
+        "face_match": {
+            "status": true,
+            "details": {
+                "distance": 0.0
+            }
+        },
+        "license_api": {
+            "status": false,
+            "details": null
+        }
+    },
+    "final_decision": false
+}
