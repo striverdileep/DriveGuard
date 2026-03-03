@@ -1,0 +1,29 @@
+{
+    "timestamp": "2026-03-02T13:24:14.109067",
+    "checks": {
+        "liveness": {
+            "status": true,
+            "details": null
+        },
+        "ocr": {
+            "status": true,
+            "details": {
+                "license_no": "AP03720220050970",
+                "DOB": "11-11-2002",
+                "Issued_Date": "18-07-2022",
+                "Expiry_Date": "10-11-2042"
+            }
+        },
+        "face_match": {
+            "status": true,
+            "details": {
+                "distance": null
+            }
+        },
+        "license_api": {
+            "status": true,
+            "details": null
+        }
+    },
+    "final_decision": true
+}
