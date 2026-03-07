@@ -20,40 +20,47 @@ def verify_license(license_data):
         bool: True if license is valid, False otherwise
     """
 
-    # ---------- BASIC SANITY CHECK ----------
     required_fields = ["LicenseNumber", "Name", "DOB", "ExpiryDate"]
 
     try:
+        if not isinstance(license_data, dict):
+            print("❌ API: Invalid license data format")
+            return False
+
+        # ---------- CHECK REQUIRED FIELDS ----------
         for field in required_fields:
-            if field not in license_data:
-                print(f"❌ API: Missing field {field}")
+            if field not in license_data or not license_data[field]:
+                print(f"❌ API: Missing or empty field -> {field}")
                 return False
 
-        # ---------- EXPIRY CHECK ----------
+        print("🔎 API: All required fields present")
+
+        # ---------- PARSE EXPIRY DATE ----------
+        expiry_str = license_data["ExpiryDate"]
+
         try:
             expiry = datetime.datetime.strptime(
-                license_data["ExpiryDate"], "%d/%m/%Y"
+                expiry_str.strip(), "%d/%m/%Y"
             ).date()
-        except ValueError:
-            print("❌ API: Invalid expiry date format")
+        except Exception:
+            print(f"❌ API: Invalid expiry date format -> {expiry_str}")
             return False
 
         today = datetime.date.today()
 
+        # ---------- CHECK EXPIRY ----------
         if expiry < today:
-            print("❌ API: License expired")
+            print(f"❌ API: License expired on {expiry}")
             return False
 
-        # ---------- MOCK API LOGIC ----------
-        # Here we assume:
-        # - License exists
-        # - License is not suspended
-        # - Details match government records
-        #
-        # In real life → HTTP API call happens here
+        # ---------- MOCK GOVERNMENT VALIDATION ----------
+        # In a real system this section would call:
+        # Government Transport API / RTO database
 
         print("✅ API: License verified successfully")
+
         return True
+
     except Exception as e:
         print(f"⚠️ API error: {e}")
         return False
