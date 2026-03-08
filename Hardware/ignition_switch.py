@@ -36,26 +36,26 @@ class IgnitionSwitch:
 
 
     def wait_for_on(self):
-        """
-        Wait until button is pressed
-        """
 
         print("🔑 Waiting for ignition button press...")
 
         while True:
 
-            state = GPIO.input(self.pin)
+            if GPIO.input(self.pin) == GPIO.LOW:
 
-            if state == GPIO.LOW:
                 print("🔑 Button pressed")
 
                 # debounce delay
+                time.sleep(0.4)
+
+                # wait until button released
+                while GPIO.input(self.pin) == GPIO.LOW:
+                    time.sleep(0.05)
+
+                # extra debounce
                 time.sleep(0.3)
 
-                if GPIO.input(self.pin) == GPIO.LOW:
-                    return True
-
-            time.sleep(0.05)
+                return True
 
 
     def wait_for_off(self):
@@ -72,7 +72,7 @@ class IgnitionSwitch:
             if state == GPIO.HIGH:
                 print("⏹ Button released")
 
-                time.sleep(0.3)
+                time.sleep(1)
 
                 if GPIO.input(self.pin) == GPIO.HIGH:
                     return True
