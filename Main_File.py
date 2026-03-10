@@ -23,6 +23,9 @@ from license_api import verify_license
 
 BASE_DIR = "data/sessions"
 
+FACE_CAPTURE_RETRIES = 2
+OCR_RETRIES = 2
+
 alcohol_sensor = None
 
 
@@ -144,42 +147,86 @@ def main():
 
         _load_face_cache()
 
-        # ---------- CAMERA CAPTURE ----------
-        try:
+        # ---------- DRIVER FACE CAPTURE ----------
+        face_capture_success = False
 
-            print("\n📸 Driver face capture starting...")
-            print("➡️ Please look at the camera")
+        for attempt in range(FACE_CAPTURE_RETRIES + 1):
 
-            for i in range(6,0,-1):
-                print(f"📷 Capturing face in {i} sec")
-                time.sleep(1)
+            try:
 
-            cam.capture_stable_image(session["face_img"])
+                print("\n📸 Driver face capture starting...")
+                print("➡️ Please look directly at the camera")
 
-            print("\n📄 Please place your driving license in front of the camera")
+                for i in range(5,0,-1):
+                    print(f"📷 Capturing face in {i} sec")
+                    time.sleep(1)
 
-            for i in range(8,0,-1):
-                print(f"📄 Capturing license in {i} sec")
-                time.sleep(1)
+                cam.capture_stable_image(session["face_img"])
 
-            cam.capture_stable_image(session["license_img"])
+                face_capture_success = True
+                break
 
-        except Exception as e:
+            except Exception as e:
 
-            print("⚠️ Camera error:", e)
+                print("⚠️ Face capture error:", e)
 
-            logger.log_error("camera", e)
+                if attempt < FACE_CAPTURE_RETRIES:
+                    print("🔁 Retrying face capture...\n")
+
+        if not face_capture_success:
+
+            print("❌ Face capture failed")
+
+            logger.log_error("camera_face_capture", "failed")
 
             cam.close()
-
             ignition.block_ignition()
-
             return
 
-        # ---------- OCR (ALWAYS RUN) ----------
+        # ---------- LICENSE CAPTURE ----------
+        license_capture_success = False
+
+        for attempt in range(OCR_RETRIES + 1):
+
+            try:
+
+                print("\n📄 Please place your driving license in front of the camera")
+                print("➡️ Keep license flat")
+                print("➡️ Fill most of the camera frame")
+                print("➡️ Avoid glare")
+
+                for i in range(7,0,-1):
+                    print(f"📄 Capturing license in {i} sec")
+                    time.sleep(1)
+
+                cam.capture_stable_image(session["license_img"])
+
+                license_capture_success = True
+                break
+
+            except Exception as e:
+
+                print("⚠️ License capture error:", e)
+
+                if attempt < OCR_RETRIES:
+                    print("🔁 Retrying license capture...\n")
+
+        if not license_capture_success:
+
+            print("❌ License capture failed")
+
+            logger.log_error("camera_license_capture", "failed")
+
+            cam.close()
+            ignition.block_ignition()
+            return
+
+        # ---------- OCR ----------
         print("\n📄 Running OCR on license...")
 
-        try:
+        license_data = None
+
+        for attempt in range(OCR_RETRIES + 1):
 
             license_data = process_document(
                 session["license_img"],
@@ -187,22 +234,24 @@ def main():
                 session["ocr_txt"]
             )
 
-            ocr_ok = license_data is not None
+            if license_data is not None:
+                break
 
-            if ocr_ok:
-                print("✅ OCR extraction successful")
-            else:
-                print("❌ OCR failed")
+            if attempt < OCR_RETRIES:
 
-        except Exception as e:
+                print("🔁 OCR failed. Please reposition license.")
 
-            logger.log_error("ocr", e)
+                for i in range(5,0,-1):
+                    print(f"📄 Re-capturing license in {i}")
+                    time.sleep(1)
 
-            ocr_ok = False
+                cam.capture_stable_image(session["license_img"])
+
+        ocr_ok = license_data is not None
 
         logger.log_check("ocr", ocr_ok)
 
-        # ---------- FACE VERIFICATION ----------
+        # ---------- FACE MATCH ----------
         print("\n🧠 Performing face verification...")
 
         current_encoding = load_and_encode(session["face_img"])
