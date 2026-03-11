@@ -5,3 +5,7 @@ deepface
 mysql-connector-python
 numpy
 pillow
+scipy
+dlib
+face-recognition
+pytesseract
