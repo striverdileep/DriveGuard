@@ -54,23 +54,32 @@ class Camera:
 
     def capture_stable_image(self, filename):
         """
-        Capture stable still image after discarding initial frames
-        (for exposure stabilization)
+        Capture stable still image after discarding garbage frame and stabilizing.
+        
+        Raspberry Pi cameras typically produce a garbage (unstable) first frame.
+        This function:
+        1. Captures and discards the first garbage frame
+        2. Allows camera to stabilize for exposure/white balance
+        3. Captures and returns the valid image
         """
 
         if self.picam2 is None:
             raise RuntimeError("Camera not initialized")
 
         try:
-            print("⚙️ Stabilizing camera exposure...")
-
-            # Discard initial unstable frames
-            for i in range(5):
+            # Step 1: Capture and discard first garbage frame from Raspberry Pi camera
+            print("📷 Capturing garbage frame...")
+            garbage_frame = self.picam2.capture_array()
+            print("🗑️ Garbage frame discarded (Raspberry Pi camera warmup)")
+            
+            # Step 2: Allow camera to stabilize with additional frames
+            print("⚙️ Stabilizing camera exposure and white balance...")
+            for i in range(4):
                 self.picam2.capture_array()
                 time.sleep(0.2)
-
-            print("📸 Capturing image...")
-
+            
+            # Step 3: Capture valid image
+            print("📸 Capturing valid image...")
             frame = self.picam2.capture_array()
 
             if frame is None:
@@ -81,7 +90,7 @@ class Camera:
 
             cv2.imwrite(filename, frame)
 
-            print(f"✅ Image saved: {filename}")
+            print(f"✅ Valid image saved: {filename}")
 
             return filename
 
