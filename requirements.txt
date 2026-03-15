@@ -9,3 +9,4 @@ scipy
 dlib
 face-recognition
 pytesseract
+requests
