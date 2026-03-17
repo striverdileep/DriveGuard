@@ -2,6 +2,7 @@ import pytesseract
 import cv2
 import re
 import datetime
+import numpy as np
 
 
 # ---------------- LICENSE AUTO CROP ----------------
@@ -28,8 +29,9 @@ def detect_and_crop_license(img):
         if len(approx) == 4:
 
             x, y, w, h = cv2.boundingRect(approx)
+            aspect_ratio = w / float(h)
 
-            if w > 300 and h > 150:
+            if 1.2 < aspect_ratio < 2.8 and w > 180 and h > 100:
 
                 pad = 40
 
@@ -39,15 +41,14 @@ def detect_and_crop_license(img):
                 w = min(w_img - x, w + pad * 2)
                 h = min(h_img - y, h + pad * 2)
 
-                cropped = img[y:y+h, x:x+w]
-
                 print("✅ License card detected and cropped safely")
+                return img[y:y+h, x:x+w]
 
-                return cropped
+    # ✅ Fallback crop (center crop)
+    print("⚠️ Auto-crop failed → using fallback crop")
 
-    print("⚠️ License auto-crop failed")
-
-    return img
+    h, w = img.shape[:2]
+    return img[int(h*0.2):int(h*0.8), int(w*0.1):int(w*0.9)]
 
 
 # ---------------- OCR CORE ----------------
@@ -61,17 +62,41 @@ def extract_text(image_path):
 
     img = detect_and_crop_license(img)
 
-    img = cv2.resize(img, None, fx=1.6, fy=1.6, interpolation=cv2.INTER_CUBIC)
+    img = cv2.resize(img, None, fx=1.8, fy=1.8, interpolation=cv2.INTER_CUBIC)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    _, thresh = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
+    thresh = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11, 2
+    )
+
+    kernel = np.array([[0, -1, 0],
+                       [-1, 5,-1],
+                       [0, -1, 0]])
+    thresh = cv2.filter2D(thresh, -1, kernel)
 
     config = "--oem 3 --psm 6"
-
     text = pytesseract.image_to_string(thresh, config=config)
+
+    return text
+
+
+# ---------------- OCR ERROR FIX ----------------
+def fix_ocr_errors(text):
+
+    replacements = {
+        'O': '0', 'I': '1', 'L': '1',
+        'Z': '2', 'S': '5', 'B': '8',
+        '+': '/', '_': '', '~': '',
+        '“': '', '”': '', '‘': '', '’': ''
+    }
+
+    for k, v in replacements.items():
+        text = text.replace(k, v)
 
     return text
 
@@ -80,11 +105,9 @@ def extract_text(image_path):
 def clean_text(text):
 
     text = text.upper()
-
     text = text.replace("\n", " ")
 
     text = re.sub(r'[^A-Z0-9/: .-]', ' ', text)
-
     text = re.sub(r'\s+', ' ', text)
 
     return text
@@ -98,8 +121,23 @@ BLOCK_WORDS = {
     "DRIVING","LICENCE","LICENSE","VALIDITY",
     "ISSUE","DATE","HOLDER","SIGNATURE",
     "ADDRESS","PRESENT","BLOOD","GROUP",
-    "ORGAN","DONOR"
+    "ORGAN","DONOR","STONE","WIFE","OF"
 }
+
+
+# ---------------- DATE FIX ----------------
+def fix_invalid_day(day):
+
+    day = int(day)
+
+    if day > 31:
+        # Fix common OCR issue (44 → 24, 84 → 04)
+        day = int(str(day)[-2:])  # take last 2 digits
+
+    if day == 0:
+        day = 1
+
+    return f"{day:02d}"
 
 
 # ---------------- FIELD EXTRACTION ----------------
@@ -107,87 +145,88 @@ def extract_fields(text, lines):
 
     data = {}
 
+    text = fix_ocr_errors(text)
+
     # -------- LICENSE NUMBER --------
-    lic = re.search(r'\b[A-Z]{2}\d{13,14}\b', text)
+    lic = re.search(r'\b[A-Z]{2}\d{10,15}\b', text)
 
     if lic:
         data["LicenseNumber"] = lic.group()
 
 
-    # -------- NAME DETECTION --------
+    # -------- NAME --------
     for line in lines:
 
         words = re.findall(r'[A-Z]{3,}', line)
 
-        if len(words) >= 2:
+        filtered = [
+            w for w in words
+            if w not in BLOCK_WORDS and len(w) > 3
+        ]
 
-            filtered = [w for w in words if w not in BLOCK_WORDS]
+        if len(filtered) >= 2:
 
-            if len(filtered) >= 2:
+            name = " ".join(filtered[:4])
 
-                name = " ".join(filtered[:3])
+            # remove trailing garbage words
+            name_parts = name.split()
+            cleaned = []
 
-                if "DATE" not in name and "VALIDITY" not in name:
-
-                    data["Name"] = name
+            for w in name_parts:
+                if w in BLOCK_WORDS:
                     break
+                cleaned.append(w)
+
+            if len(cleaned) >= 2:
+                data["Name"] = " ".join(cleaned)
+                break
 
 
-    # -------- DOB DETECTION --------
-    dob = re.search(
-        r'DATE\s*OF\s*[A-Z]{2,6}\s*(\d{2}[./-]\d{2}[./-]\d{4})',
-        text
-    )
+    # -------- DATE EXTRACTION --------
+    raw_dates = re.findall(r'\d{1,2}[^0-9]\d{1,2}[^0-9]\d{4}', text)
 
-    if dob:
-
-        d = dob.group(1)
-
-        d = d.replace('.', '/')
-        d = d.replace('-', '/')
-
-        year = int(d[-4:])
-
-        if year > datetime.datetime.now().year:
-            year = year - 80
-
-        d = d[:6] + str(year)
-
-        data["DOB"] = d
-
-
-    # -------- EXPIRY DATE DETECTION --------
-    dates = re.findall(r'\d{2}[./-]\d{2}[./-]\d{4}', text)
+    print("🧪 Detected raw dates:", raw_dates)
 
     parsed = []
 
-    for d in dates:
+    for d in raw_dates:
 
-        d = d.replace('.', '/')
-        d = d.replace('-', '/')
+        d = re.sub(r'[^0-9]', '/', d)
+        parts = d.split('/')
 
-        try:
+        if len(parts) == 3:
 
-            dt = datetime.datetime.strptime(d, "%d/%m/%Y")
+            day, month, year = parts
 
-            parsed.append((d, dt))
+            # ✅ Fix invalid values
+            day = fix_invalid_day(day)
 
-        except:
-            pass
+            if len(month) == 1:
+                month = '0' + month
+
+            try:
+                dt = datetime.datetime.strptime(
+                    f"{day}/{month}/{year}",
+                    "%d/%m/%Y"
+                )
+
+                if 1950 < dt.year < 2100:
+                    parsed.append((f"{day}/{month}/{year}", dt))
+
+            except:
+                pass
 
     if parsed:
 
         parsed = sorted(parsed, key=lambda x: x[1])
 
-        expiry = parsed[-1][0]
-
-        data["ExpiryDate"] = expiry
-
+        data["DOB"] = parsed[0][0]
+        data["ExpiryDate"] = parsed[-1][0]
 
     return data
 
 
-# ---------------- MAIN PROCESS ----------------
+# ---------------- MAIN ----------------
 def process_document(image_path, doc_name, output_txt):
 
     try:
@@ -215,7 +254,7 @@ def process_document(image_path, doc_name, output_txt):
         data = extract_fields(text, lines)
 
         if not data:
-            print("❌ OCR: No valid fields extracted")
+            print("❌ OCR failed")
             return None
 
         print("\n📄 Extracted License Data")
@@ -227,12 +266,11 @@ def process_document(image_path, doc_name, output_txt):
 
     except Exception as e:
 
-        print(f"⚠️ OCR processing error: {e}")
-
+        print(f"⚠️ OCR error: {e}")
         return None
 
 
-# ---------------- TEST MODE ----------------
+# ---------------- TEST ----------------
 if __name__ == "__main__":
 
     result = process_document(
