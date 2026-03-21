@@ -1,95 +1,27 @@
-# Main_File.py
-
 import os
 import threading
 import time
 from datetime import datetime
-import numpy as np
-
 from session_logger import SessionLogger
 
-# Hardware imports
-from Hardware.cam import Camera
-from Hardware.liveliness import check_blink_from_frames
+from cam import Camera
+from ocr_test import process_document
+from face_match import match_faces
+from liveliness import check_liveness
+
 from Hardware.alcohol_sensor import AlcoholSensor
 from Hardware.ignition_control import IgnitionController
-from Hardware.ignition_switch import IgnitionSwitch
 
-# AI modules
-from ocr_test import process_document
-from face_match import match_faces, load_and_encode
 from license_api import verify_license
 
-
 BASE_DIR = "data/sessions"
-
-FACE_CAPTURE_RETRIES = 2
-OCR_RETRIES = 2
-
 alcohol_sensor = None
 
 
-# ---------- FACE CACHE ----------
-_face_cache_path = os.path.join(BASE_DIR, "face_cache.npy")
-_previous_face_encodings = None
+# ---------------- SESSION ----------------
 
-
-def _load_face_cache():
-
-    global _previous_face_encodings
-
-    try:
-        if os.path.exists(_face_cache_path):
-
-            data = np.load(_face_cache_path)
-
-            if data.ndim == 1:
-                data = data.reshape(1, -1)
-
-            _previous_face_encodings = data
-        else:
-            _previous_face_encodings = None
-
-    except Exception:
-        _previous_face_encodings = None
-
-
-def _save_face_cache(enc, max_entries=50, distance_threshold=0.6):
-
-    global _previous_face_encodings
-
-    try:
-
-        if _previous_face_encodings is None:
-            arr = np.array([enc])
-
-        else:
-
-            dists = np.linalg.norm(_previous_face_encodings - enc, axis=1)
-
-            if np.any(dists <= distance_threshold):
-                return
-
-            arr = np.vstack([_previous_face_encodings, enc])
-
-        if arr.shape[0] > max_entries:
-            arr = arr[-max_entries:]
-
-        os.makedirs(BASE_DIR, exist_ok=True)
-
-        np.save(_face_cache_path, arr)
-
-        _previous_face_encodings = arr
-
-    except Exception as e:
-        print("⚠️ Face cache save error:", e)
-
-
-# ---------- SESSION ----------
 def create_session():
-
     session_id = datetime.now().strftime("session_%Y-%m-%d_%H-%M-%S")
-
     base = os.path.join(BASE_DIR, session_id)
     images = os.path.join(base, "images")
 
@@ -103,39 +35,26 @@ def create_session():
     }
 
 
-# ---------- ALCOHOL SENSOR THREAD ----------
+# ---------------- ALCOHOL THREAD ----------------
+
 def start_alcohol_sensor():
-
     global alcohol_sensor
+    alcohol_sensor = AlcoholSensor()
 
-    alcohol_sensor = AlcoholSensor(pin=17, warmup=False)
 
+# ---------------- MAIN ----------------
 
-# ---------- MAIN ----------
 def main():
+    print("\n🚗 DriveGuard – Full System Mode (DeepFace Backend)\n")
 
-    print("\n🚗 DriveGuard – Full System Mode\n")
-
-    ignition = IgnitionController(
-        relay_pin=25,
-        buzzer_pin=23,
-        green_led=22,
-        red_led=27
-    )
-
-    switch = IgnitionSwitch(pin=24)
-
+    # Start alcohol sensor
     alcohol_thread = threading.Thread(target=start_alcohol_sensor)
     alcohol_thread.start()
 
-    print("🔥 Warming alcohol sensor while waiting for button...")
-
-    cam = Camera()
-
-    switch.wait_for_on()
+    # Ignition setup
+    ignition = IgnitionController()
 
     try:
-
         session = create_session()
         logger = SessionLogger(session["base"])
 
@@ -145,272 +64,174 @@ def main():
         alcohol_ok = False
         liveness_ok = False
 
-        _load_face_cache()
+        # 📸 CAMERA
+        cam = Camera()
 
-        # ---------- DRIVER FACE CAPTURE ----------
-        face_capture_success = False
+        try:
+            print("📸 Capturing DRIVER FACE...")
+            cam.capture_stable_image(session["face_img"])
 
-        for attempt in range(FACE_CAPTURE_RETRIES + 1):
+            time.sleep(2)
 
-            try:
+            print("📸 Capturing LICENSE IMAGE...")
+            cam.capture_stable_image(session["license_img"])
 
-                print("\n📸 Driver face capture starting...")
-                print("➡️ Please look directly at the camera")
+        except Exception as e:
+            print(f"⚠️ Camera error: {e}")
+            logger.log_error("camera", e)
 
-                for i in range(5,0,-1):
-                    print(f"📷 Capturing face in {i} sec")
-                    time.sleep(1)
-
-                cam.capture_stable_image(session["face_img"])
-
-                face_capture_success = True
-                break
-
-            except Exception as e:
-
-                print("⚠️ Face capture error:", e)
-
-                if attempt < FACE_CAPTURE_RETRIES:
-                    print("🔁 Retrying face capture...\n")
-
-        if not face_capture_success:
-
-            print("❌ Face capture failed")
-
-            logger.log_error("camera_face_capture", "failed")
-
-            cam.close()
             ignition.block_ignition()
+            red_on()
+            buzzer_on()
+
             return
 
-        # ---------- LICENSE CAPTURE ----------
-        license_capture_success = False
+        # 👁️ LIVENESS
+        try:
+            print("\n👁️ Performing liveness check...")
+            liveness_ok = check_liveness(session["face_img"])
+            logger.log_check("liveness", liveness_ok)
+        except Exception as e:
+            print(f"⚠️ Liveness error: {e}")
+            logger.log_error("liveness", e)
+            liveness_ok = False
 
-        for attempt in range(OCR_RETRIES + 1):
+        cam.close()
 
-            try:
+        # 🔴 If liveness fails → stop early
+        if not liveness_ok:
+            print("❌ Liveness failed")
 
-                print("\n📄 Please place your driving license in front of the camera")
-                print("➡️ Keep license flat")
-                print("➡️ Fill most of the camera frame")
-                print("➡️ Avoid glare")
+            alcohol_thread.join()
+            logger.log_check("alcohol", False, {"skipped": True})
 
-                for i in range(7,0,-1):
-                    print(f"📄 Capturing license in {i} sec")
-                    time.sleep(1)
-
-                cam.capture_stable_image(session["license_img"])
-
-                license_capture_success = True
-                break
-
-            except Exception as e:
-
-                print("⚠️ License capture error:", e)
-
-                if attempt < OCR_RETRIES:
-                    print("🔁 Retrying license capture...\n")
-
-        if not license_capture_success:
-
-            print("❌ License capture failed")
-
-            logger.log_error("camera_license_capture", "failed")
-
-            cam.close()
             ignition.block_ignition()
+            red_on()
+            buzzer_on()
+
             return
 
-        # ---------- OCR ----------
-        print("\n📄 Running OCR on license...")
-
-        license_data = None
-
-        for attempt in range(OCR_RETRIES + 1):
-
+        # 🔍 OCR
+        try:
             license_data = process_document(
                 session["license_img"],
                 "DRIVING LICENSE",
                 session["ocr_txt"]
             )
 
-            if license_data is not None:
-                break
+            ocr_ok = license_data is not None
+            logger.log_check("ocr", ocr_ok)
 
-            if attempt < OCR_RETRIES:
-
-                print("🔁 OCR failed. Please reposition license.")
-
-                for i in range(5,0,-1):
-                    print(f"📄 Re-capturing license in {i}")
-                    time.sleep(1)
-
-                cam.capture_stable_image(session["license_img"])
-
-        ocr_ok = license_data is not None
-
-        logger.log_check("ocr", ocr_ok)
-
-        # ---------- FACE MATCH ----------
-        print("\n🧠 Performing face verification...")
-
-        current_encoding = load_and_encode(session["face_img"])
-
-        if current_encoding is None:
-
-            print("❌ Driver face encoding failed")
-            face_ok = False
-
-        else:
-
-            face_cached = False
-
-            if _previous_face_encodings is not None:
-
-                dists = np.linalg.norm(
-                    _previous_face_encodings - current_encoding,
-                    axis=1
-                )
-
-                min_dist = float(np.min(dists))
-
-                if min_dist <= 0.6:
-
-                    face_cached = True
-                    face_ok = True
-
-                    print("♻️ Cached face recognized")
-
-            if not face_cached:
-
-                try:
-
-                    face_result = match_faces(
-                        session["license_img"],
-                        session["face_img"]
-                    )
-
-                    face_ok = face_result.get("match", False)
-
-                except Exception as e:
-
-                    logger.log_error("face_match", e)
-
-                    face_ok = False
-
-        logger.log_check("face_match", face_ok)
-
-        # ---------- LIVENESS ----------
-        try:
-
-            print("\n👁️ Liveness check starting...")
-            print("➡️ Blink once when prompted")
-
-            for i in range(3,0,-1):
-                print(f"👁️ Blink detection starting in {i}")
-                time.sleep(1)
-
-            frame_stream = cam.get_frame_stream(duration_sec=7)
-
-            liveness_ok = check_blink_from_frames(frame_stream)
-
-            logger.log_check("liveness", liveness_ok)
+            if not ocr_ok:
+                print("❌ OCR failed")
 
         except Exception as e:
+            print(f"⚠️ OCR error: {e}")
+            logger.log_error("ocr", e)
+            ocr_ok = False
 
-            print("⚠️ Liveness error:", e)
-
-            logger.log_error("liveness", e)
-
-            liveness_ok = False
-
-        cam.close()
-
-        # ---------- LICENSE API ----------
+        # 🧠 FACE MATCH
         if ocr_ok:
-
             try:
+                print("\n🧠 Performing face match...")
 
-                api_ok = verify_license(license_data)
+                face_result = match_faces(
+                    session["license_img"],
+                    session["face_img"]
+                )
+
+                face_ok = face_result.get("match", False)
+
+                logger.log_check("face_match", face_ok)
+
+                if not face_ok:
+                    print("❌ Face match failed")
 
             except Exception as e:
+                print(f"⚠️ Face match error: {e}")
+                logger.log_error("face_match", e)
+                face_ok = False
 
+        # 🌐 API
+        if ocr_ok and face_ok:
+            try:
+                api_ok = verify_license(license_data)
+                logger.log_check("license_api", api_ok)
+
+                if not api_ok:
+                    print("❌ License API failed")
+
+            except Exception as e:
+                print(f"⚠️ API error: {e}")
                 logger.log_error("license_api", e)
-
                 api_ok = False
 
-        logger.log_check("license_api", api_ok)
-
-        if ocr_ok and api_ok and face_ok and current_encoding is not None:
-
-            _save_face_cache(current_encoding)
-
-        # ---------- ALCOHOL CHECK ----------
+        # 🍺 ALCOHOL
         alcohol_thread.join()
 
         try:
-
             detected, value = alcohol_sensor.is_alcohol_detected()
-
-            print("\n🍺 Alcohol Sensor Reading:", value)
-
-            if detected:
-                print("🚫 Alcohol detected! Ignition will be blocked.")
-                alcohol_ok = False
-            else:
-                print("✅ No alcohol detected")
-                alcohol_ok = True
+            alcohol_ok = not detected
 
             logger.log_check("alcohol", alcohol_ok)
 
+            if not alcohol_ok:
+                print("❌ Alcohol detected")
+
         except Exception as e:
-
-            print("⚠️ Alcohol sensor error:", e)
-
+            print(f"⚠️ Alcohol error: {e}")
+            logger.log_error("alcohol", e)
             alcohol_ok = False
 
-            logger.log_error("alcohol", e)
-
-        # ---------- FINAL DECISION ----------
+        # ✅ FINAL DECISION
         final_decision = (
-            ocr_ok
-            and liveness_ok
-            and face_ok
-            and api_ok
-            and alcohol_ok
+            liveness_ok and
+            ocr_ok and
+            face_ok and
+            api_ok and
+            alcohol_ok
         )
 
         logger.set_final_decision(final_decision)
-
         logger.write()
 
-        # ---------- IGNITION ----------
+        # 🔥 HARDWARE OUTPUT
         if final_decision:
-
             ignition.allow_ignition()
-
+            green_on()
+            red_on(False)
             print("\n✅ IGNITION ENABLED")
-
         else:
-
             ignition.block_ignition()
-
+            red_on()
+            green_on(False)
+            buzzer_on()
             print("\n❌ IGNITION BLOCKED")
 
-    except KeyboardInterrupt:
-
-        print("\n⚠️ Interrupted")
+        # 📊 SUMMARY
+        print("\n========== SESSION SUMMARY ==========")
+        print(f"Liveness OK   : {liveness_ok}")
+        print(f"OCR OK        : {ocr_ok}")
+        print(f"Face Match    : {face_ok}")
+        print(f"License API   : {api_ok}")
+        print(f"Alcohol OK    : {alcohol_ok}")
+        print("====================================")
 
     except Exception as e:
-
-        print("❌ System Error:", e)
-
+        print(f"\n❌ System Error: {e}")
         ignition.block_ignition()
+        red_on()
+        buzzer_on()
 
     finally:
+        # 🔧 RESET HARDWARE (VERY IMPORTANT)
+        try:
+            green_on(False)
+            red_on(False)
+        except:
+            pass
 
         ignition.cleanup()
-
         print("\n🛑 System shutdown complete")
 
 
