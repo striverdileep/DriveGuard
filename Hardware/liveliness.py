@@ -120,6 +120,7 @@ def check_blink_from_frames(frame_stream):
         print("⚠️ No face detected during liveness check")
         return False
 
+
     print(f"👁️ Total blinks detected: {total_blinks}")
 
     return total_blinks >= 1

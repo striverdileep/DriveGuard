@@ -9,6 +9,10 @@ import numpy as np
 def detect_and_crop_license(img):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Improve contrast
+    gray = cv2.equalizeHist(gray)
+
     edges = cv2.Canny(gray, 50, 150)
 
     contours, _ = cv2.findContours(
@@ -31,9 +35,9 @@ def detect_and_crop_license(img):
             x, y, w, h = cv2.boundingRect(approx)
             aspect_ratio = w / float(h)
 
-            if 1.2 < aspect_ratio < 2.8 and w > 180 and h > 100:
+            if 1.2 < aspect_ratio < 2.8 and w > 200 and h > 120:
 
-                pad = 40
+                pad = 30
 
                 x = max(0, x - pad)
                 y = max(0, y - pad)
@@ -41,14 +45,14 @@ def detect_and_crop_license(img):
                 w = min(w_img - x, w + pad * 2)
                 h = min(h_img - y, h + pad * 2)
 
-                print("✅ License card detected and cropped safely")
+                print("✅ License card detected and cropped")
                 return img[y:y+h, x:x+w]
 
-    # ✅ Fallback crop (center crop)
-    print("⚠️ Auto-crop failed → using fallback crop")
+    # fallback
+    print("⚠️ Auto-crop failed → using center crop")
 
     h, w = img.shape[:2]
-    return img[int(h*0.2):int(h*0.8), int(w*0.1):int(w*0.9)]
+    return img[int(h*0.25):int(h*0.75), int(w*0.15):int(w*0.85)]
 
 
 # ---------------- OCR CORE ----------------
@@ -62,25 +66,37 @@ def extract_text(image_path):
 
     img = detect_and_crop_license(img)
 
-    img = cv2.resize(img, None, fx=1.8, fy=1.8, interpolation=cv2.INTER_CUBIC)
+    # Resize for better OCR
+    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    thresh = cv2.adaptiveThreshold(
+    # CLAHE for better contrast
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+
+    # Two threshold methods
+    thresh1 = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY,
+        11, 2
+    )
+
+    thresh2 = cv2.adaptiveThreshold(
         gray, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY,
         11, 2
     )
 
-    kernel = np.array([[0, -1, 0],
-                       [-1, 5,-1],
-                       [0, -1, 0]])
-    thresh = cv2.filter2D(thresh, -1, kernel)
-
     config = "--oem 3 --psm 6"
-    text = pytesseract.image_to_string(thresh, config=config)
+
+    text1 = pytesseract.image_to_string(thresh1, config=config)
+    text2 = pytesseract.image_to_string(thresh2, config=config)
+
+    # Choose better result
+    text = text1 if len(text1) > len(text2) else text2
 
     return text
 
@@ -113,7 +129,7 @@ def clean_text(text):
     return text
 
 
-# ---------------- WORD FILTER ----------------
+# ---------------- BLOCK WORDS ----------------
 BLOCK_WORDS = {
     "GOVERNMENT","INDIA","INDIAN","UNION","STATE",
     "PRADESH","DEPARTMENT","ACCOUNT","CARD",
@@ -121,7 +137,7 @@ BLOCK_WORDS = {
     "DRIVING","LICENCE","LICENSE","VALIDITY",
     "ISSUE","DATE","HOLDER","SIGNATURE",
     "ADDRESS","PRESENT","BLOOD","GROUP",
-    "ORGAN","DONOR","STONE","WIFE","OF"
+    "ORGAN","DONOR","WIFE","OF"
 }
 
 
@@ -131,8 +147,7 @@ def fix_invalid_day(day):
     day = int(day)
 
     if day > 31:
-        # Fix common OCR issue (44 → 24, 84 → 04)
-        day = int(str(day)[-2:])  # take last 2 digits
+        day = int(str(day)[-2:])
 
     if day == 0:
         day = 1
@@ -148,11 +163,17 @@ def extract_fields(text, lines):
     text = fix_ocr_errors(text)
 
     # -------- LICENSE NUMBER --------
-    lic = re.search(r'\b[A-Z]{2}\d{10,15}\b', text)
+    patterns = [
+        r'\b[A-Z]{2}\d{10,15}\b',
+        r'\b[A-Z]{2}-\d{4}-\d{10}\b',
+        r'\b[A-Z]{2}\s?\d{2}\s?\d{11}\b'
+    ]
 
-    if lic:
-        data["LicenseNumber"] = lic.group()
-
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            data["LicenseNumber"] = match.group().replace(" ", "")
+            break
 
     # -------- NAME --------
     for line in lines:
@@ -164,23 +185,9 @@ def extract_fields(text, lines):
             if w not in BLOCK_WORDS and len(w) > 3
         ]
 
-        if len(filtered) >= 2:
-
-            name = " ".join(filtered[:4])
-
-            # remove trailing garbage words
-            name_parts = name.split()
-            cleaned = []
-
-            for w in name_parts:
-                if w in BLOCK_WORDS:
-                    break
-                cleaned.append(w)
-
-            if len(cleaned) >= 2:
-                data["Name"] = " ".join(cleaned)
-                break
-
+        if 2 <= len(filtered) <= 4:
+            data["Name"] = " ".join(filtered)
+            break
 
     # -------- DATE EXTRACTION --------
     raw_dates = re.findall(r'\d{1,2}[^0-9]\d{1,2}[^0-9]\d{4}', text)
@@ -198,13 +205,12 @@ def extract_fields(text, lines):
 
             day, month, year = parts
 
-            # ✅ Fix invalid values
-            day = fix_invalid_day(day)
-
-            if len(month) == 1:
-                month = '0' + month
-
             try:
+                day = fix_invalid_day(day)
+
+                if len(month) == 1:
+                    month = '0' + month
+
                 dt = datetime.datetime.strptime(
                     f"{day}/{month}/{year}",
                     "%d/%m/%Y"
@@ -214,7 +220,7 @@ def extract_fields(text, lines):
                     parsed.append((f"{day}/{month}/{year}", dt))
 
             except:
-                pass
+                continue
 
     if parsed:
 
@@ -222,6 +228,16 @@ def extract_fields(text, lines):
 
         data["DOB"] = parsed[0][0]
         data["ExpiryDate"] = parsed[-1][0]
+
+    # -------- DEBUG OUTPUT --------
+    if "LicenseNumber" not in data:
+        print("❌ License number not detected")
+
+    if "Name" not in data:
+        print("❌ Name not detected")
+
+    if "DOB" not in data or "ExpiryDate" not in data:
+        print("❌ Dates not detected")
 
     return data
 
@@ -235,7 +251,7 @@ def process_document(image_path, doc_name, output_txt):
 
         raw = extract_text(image_path)
 
-        print("\n📄 OCR RAW TEXT:\n", raw)
+        print("\n📄 OCR RAW TEXT:\n", raw[:1000])  # limit print
 
         if not raw:
             return None

@@ -1,5 +1,4 @@
 # cam.py
-
 import time
 import cv2
 from picamera2 import Picamera2
@@ -9,41 +8,24 @@ class Camera:
     """
     Single authoritative camera interface.
     Uses Picamera2 ONLY.
-    Handles exposure stabilization automatically.
 
-    Camera Connections:
-
-    Raspberry Pi Camera Module (CSI Camera)
-
-    Connection type:
-        CSI Ribbon Cable (NOT GPIO)
-
-    Steps:
-        1. Connect camera ribbon cable to Raspberry Pi CSI port
-        2. Blue side of ribbon faces Ethernet port
-        3. Enable camera interface:
-            sudo raspi-config
-            Interface Options → Camera → Enable
-        4. Reboot Raspberry Pi
-
-    No GPIO pins are used by this module.
+    - Low resolution for streaming (fast)
+    - High resolution for image capture (OCR)
     """
 
     def __init__(self):
         try:
-            print("📷 Initializing camera...")
-
             self.picam2 = Picamera2()
 
-            config = self.picam2.create_video_configuration(
-                main={"size": (640, 480), "format": "RGB888"}
+            # 🔹 Default: LOW RES for streaming (fast)
+            self.picam2.configure(
+                self.picam2.create_video_configuration(
+                    main={"size": (640, 480), "format": "RGB888"}
+                )
             )
 
-            self.picam2.configure(config)
             self.picam2.start()
-
-            # Allow auto exposure / white balance to settle
-            time.sleep(2)
+            time.sleep(1.5)  # allow sensor to stabilize
 
             print("✅ Camera initialized successfully")
 
@@ -51,102 +33,90 @@ class Camera:
             print(f"⚠️ Camera init error: {e}")
             self.picam2 = None
 
-
+    # --------------------------------------------------
+    # 📸 HIGH QUALITY IMAGE CAPTURE (FOR OCR / FACE IMAGE)
+    # --------------------------------------------------
     def capture_stable_image(self, filename):
         """
-        Capture stable still image after discarding garbage frame and stabilizing.
-        
-        Raspberry Pi cameras typically produce a garbage (unstable) first frame.
-        This function:
-        1. Captures and discards the first garbage frame
-        2. Allows camera to stabilize for exposure/white balance
-        3. Captures and returns the valid image
+        Capture a high-resolution image for OCR / face capture.
+        Automatically switches resolution.
         """
-
         if self.picam2 is None:
             raise RuntimeError("Camera not initialized")
 
         try:
-            # Step 1: Capture and discard first garbage frame from Raspberry Pi camera
-            print("📷 Capturing garbage frame...")
-            garbage_frame = self.picam2.capture_array()
-            print("🗑️ Garbage frame discarded (Raspberry Pi camera warmup)")
-            
-            # Step 2: Allow camera to stabilize with additional frames
+            print("⚙️ Switching to HIGH RES mode for capture...")
+
+            # 🔴 Stop current stream
+            self.picam2.stop()
+
+            # 🔹 HIGH RES config (for OCR clarity)
+            self.picam2.configure(
+                self.picam2.create_still_configuration(
+                    main={"size": (1640, 1232)}
+                )
+            )
+
+            self.picam2.start()
+
+            # 🔥 Let exposure + white balance settle
             print("⚙️ Stabilizing camera exposure and white balance...")
-            for i in range(4):
-                self.picam2.capture_array()
-                time.sleep(0.2)
-            
-            # Step 3: Capture valid image
-            print("📸 Capturing valid image...")
+            time.sleep(2)
+
+            # 📷 Capture frame
             frame = self.picam2.capture_array()
-
-            if frame is None:
-                raise RuntimeError("Failed to capture frame")
-
-            # Convert RGB → BGR for OpenCV
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
             cv2.imwrite(filename, frame)
 
-            print(f"✅ Valid image saved: {filename}")
+            print(f"✅ Image saved: {filename}")
+
+            # 🔄 Switch back to LOW RES mode
+            print("⚙️ Switching back to LOW RES mode...")
+
+            self.picam2.stop()
+
+            self.picam2.configure(
+                self.picam2.create_video_configuration(
+                    main={"size": (640, 480), "format": "RGB888"}
+                )
+            )
+
+            self.picam2.start()
+            time.sleep(1)
 
             return filename
 
         except Exception as e:
-            raise RuntimeError(f"Camera capture error: {e}")
+            print(f"⚠️ Camera capture error: {e}")
+            return None
 
-
-    def get_frame_stream(self, duration_sec=6, fps=12):
+    # --------------------------------------------------
+    # 🎥 STREAM FRAMES (FOR LIVENESS / FACE DETECTION)
+    # --------------------------------------------------
+    def get_frame_stream(self, duration_sec=3, fps=10):
         """
-        Generator that yields frames for liveness detection
-        Increased duration and FPS for better blink detection
+        Generator that yields frames for liveness detection.
+        Uses LOW RES mode for speed.
         """
-
         if self.picam2 is None:
             raise RuntimeError("Camera not initialized")
 
         interval = 1.0 / fps
         end_time = time.time() + duration_sec
 
-        frame_count = 0
-
-        print("👁️ Starting frame stream for liveness detection...")
-        print(f"⏱ Duration: {duration_sec} sec | FPS: {fps}")
-
         while time.time() < end_time:
-
             try:
                 frame = self.picam2.capture_array()
-
-                if frame is None:
-                    continue
-
-                # Convert RGB → BGR
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-                frame_count += 1
-
-                yield frame
-
             except Exception as e:
                 print(f"⚠️ Camera stream error: {e}")
                 break
 
+            yield frame
             time.sleep(interval)
 
-        print(f"👁️ Frame stream ended | Frames captured: {frame_count}")
-
-
+    # --------------------------------------------------
+    # 🔴 CLEANUP
+    # --------------------------------------------------
     def close(self):
-        """
-        Safely stop the camera
-        """
-
         if self.picam2:
-            try:
-                self.picam2.stop()
-                print("🛑 Camera stopped")
-            except Exception:
-                pass
+            self.picam2.stop()
+            print("🛑 Camera stopped")

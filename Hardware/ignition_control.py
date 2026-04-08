@@ -32,13 +32,14 @@ class IgnitionController:
             GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BCM)
 
-            # Setup pins
             GPIO.setup(self.relay_pin, GPIO.OUT)
             GPIO.setup(self.buzzer_pin, GPIO.OUT)
             GPIO.setup(self.green_led, GPIO.OUT)
             GPIO.setup(self.red_led, GPIO.OUT)
 
-            # Initial safe state
+            # Ensure all OFF initially
+            GPIO.output(self.buzzer_pin, GPIO.LOW)
+
             self._safe_reset()
 
             self.initialized = True
@@ -50,9 +51,9 @@ class IgnitionController:
     # ---------------- SAFE RESET ----------------
     def _safe_reset(self):
         GPIO.output(self.relay_pin, GPIO.LOW)
-        GPIO.output(self.buzzer_pin, GPIO.LOW)
+        GPIO.output(self.buzzer_pin, GPIO.LOW)   # ensure buzzer OFF
         GPIO.output(self.green_led, GPIO.LOW)
-        GPIO.output(self.red_led, GPIO.HIGH)  # red ON = blocked
+        GPIO.output(self.red_led, GPIO.HIGH)     # red ON
 
     # ---------------- IGNITION ALLOW ----------------
     def allow_ignition(self):
@@ -82,7 +83,7 @@ class IgnitionController:
 
             print("🔴 IGNITION BLOCKED")
 
-            # 🔔 Buzzer pattern
+            # Buzzer alert
             for _ in range(3):
                 GPIO.output(self.buzzer_pin, GPIO.HIGH)
                 time.sleep(0.3)
@@ -92,30 +93,12 @@ class IgnitionController:
         except Exception as e:
             print(f"⚠️ Ignition block error: {e}")
 
-    # ---------------- CONTINUOUS ALARM ----------------
-    def alarm_continuous(self, duration=4):
-        try:
-            if not self.initialized:
-                return
-
-            end_time = time.time() + duration
-
-            while time.time() < end_time:
-                GPIO.output(self.buzzer_pin, GPIO.HIGH)
-                time.sleep(0.2)
-                GPIO.output(self.buzzer_pin, GPIO.LOW)
-                time.sleep(0.1)
-
-        except Exception as e:
-            print(f"⚠️ Alarm error: {e}")
-
     # ---------------- CLEANUP ----------------
     def cleanup(self):
         try:
             if not self.initialized:
                 return
 
-            # Turn everything OFF before cleanup
             GPIO.output(self.relay_pin, GPIO.LOW)
             GPIO.output(self.buzzer_pin, GPIO.LOW)
             GPIO.output(self.green_led, GPIO.LOW)
@@ -126,4 +109,4 @@ class IgnitionController:
             print("🧹 GPIO cleaned (all devices OFF)")
 
         except Exception as e:
-            print(f"⚠️ Ignition cleanup error: {e}")
+            print(f"⚠️ Cleanup error: {e}")

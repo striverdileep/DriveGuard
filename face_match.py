@@ -1,59 +1,73 @@
 # face_match.py
-"""
-Face matching using DeepFace library.
-Lightweight variant optimized for Raspberry Pi deployment.
-"""
+import face_recognition
+import numpy as np
+import cv2
+import tempfile
+from liveliness import check_liveness
 
-from deepface import DeepFace
-
-
-def match_faces(license_image_path, user_image_path, threshold=0.6):
+def load_and_encode(image_input):
     """
-    Compares face from license image with live user image using DeepFace.
-
-    Args:
-        license_image_path: path to license/ID image
-        user_image_path: path to user's live face image
-        threshold: distance threshold for match (lower = stricter)
-
-    Returns:
-        {
-            "match": True / False,
-            "distance": float or None,
-            "confidence": float (0-1)
-        }
+    image_input: either path (str) or bytes (BLOB)
+    Returns face encoding or None
     """
     try:
-        # DeepFace.verify uses yunet (fast detector) & Facenet (lightweight model)
-        # anti_spoofing=True detects photo/video attacks
-        result = DeepFace.verify(
-            img1_path=license_image_path,
-            img2_path=user_image_path,
-            model_name="Facenet",
-            detector_backend="yunet",
-            distance_metric="euclidean",
-            enforce_detection=True,
-            align=True,
-            anti_spoofing=True
-        )
+        if isinstance(image_input, bytes):
+            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+            tmp_file.write(image_input)
+            tmp_file.close()
+            image_path = tmp_file.name
+        else:
+            image_path = image_input
 
-        distance = float(result.get("distance", 1.0))
-        match = result.get("verified", False)
+        image = face_recognition.load_image_file(image_path)
+        face_locations = face_recognition.face_locations(image)
 
-        # confidence: inverse of normalized distance
-        confidence = 1.0 - min(distance / 2.0, 1.0)
+        if len(face_locations) == 0:
+            print(f"❌ No face found in {image_path}")
+            return None
+
+        encoding = face_recognition.face_encodings(image, face_locations)[0]
+        return encoding
+
+    except Exception as e:
+        print("❌ Encoding error:", e)
+        return None
+
+def match_faces(db_face_input, user_image_path, user_video_path=None):
+    """
+    db_face_input: bytes or path from API
+    user_image_path: path to user captured image
+    user_video_path: optional video for liveness
+    """
+    try:
+        print("🧠 Running LOCAL face recognition...")
+        db_encoding = load_and_encode(db_face_input)
+        user_encoding = load_and_encode(user_image_path)
+
+        if db_encoding is None or user_encoding is None:
+            return {"match": False, "distance": None, "confidence": 0.0, "liveness": False}
+
+        # Compare faces
+        distance_val = np.linalg.norm(db_encoding - user_encoding)
+        match = distance_val < 0.6
+        confidence = round(1 - distance_val, 4)
+
+        print(f"📊 Distance: {distance_val}")
+        print(f"📊 Confidence: {confidence}")
+
+        # Liveness detection
+        if user_video_path:
+            liveness_ok = check_liveness(user_video_path)
+        else:
+            liveness_ok = False
 
         return {
             "match": match,
-            "distance": round(distance, 4),
-            "confidence": round(confidence, 4)
+            "distance": distance_val,
+            "confidence": confidence,
+            "liveness": liveness_ok
         }
 
     except Exception as e:
-        print(f"⚠️ Face matching error: {e}")
-        return {
-            "match": False,
-            "distance": None,
-            "confidence": 0.0,
-            "reason": str(e)
-        }
+        print("❌ Face match error:", e)
+        return {"match": False, "distance": None, "confidence": 0.0, "liveness": False}
