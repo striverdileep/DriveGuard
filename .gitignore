@@ -4,3 +4,5 @@ data/sessions/
 *.dat
 venv/
 venv310/
+.env
+
